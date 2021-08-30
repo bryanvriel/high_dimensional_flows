@@ -6,7 +6,7 @@ from tqdm import tqdm
 import logging
 
 def train(variables, loss_function, dataset, test_dataset, optimizer, ckpt_manager,
-          n_epochs=100, logfile='log_train', ckpt_skip=10, **kwargs):
+          n_epochs=100, clip=None, logfile='log_train', ckpt_skip=10, **kwargs):
     """
     Custom training loop to fetch batches from datasets with different sizes
     and perform updates on variables.
@@ -27,6 +27,8 @@ def train(variables, loss_function, dataset, test_dataset, optimizer, ckpt_manag
         Checkpoint manager for saving weights.
     n_epochs: int, optional
         Number of epochs. Default: 100.
+    clip: int or float, optional
+        Global norm value to clip gradients. Default: None.
     logfile: str, optional
         Output file for logging training statistics. Default: 'log_train'.
     ckpt_skip: int, optional
@@ -147,7 +149,7 @@ def create_checkpoint_manager(checkdir, restore=False, max_to_keep=1, **kwargs):
     ckpt = tf.train.Checkpoint(**kwargs)
     ckpt_manager = tf.train.CheckpointManager(ckpt, checkdir, max_to_keep)
     if restore:
-        ckpt.restore(ckpt_manager.latest_checkpoint)
+        ckpt.restore(ckpt_manager.latest_checkpoint).expect_partial()
     return ckpt_manager
 
 
