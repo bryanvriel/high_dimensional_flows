@@ -53,6 +53,13 @@ class ConditionalNormal(tfd.Distribution):
             )
         )
 
+    def parameter_model(self, model_args, squeeze=False):
+        """
+        Directly evaluate underlying parameter model to get mean field loc and scale.
+        """
+        loc, scale = self._parameter_model(*model_args, squeeze=squeeze)
+        return loc, scale
+
     def mvn(self, **kwargs):
         """
         Generate a multivariate normal distribution with diagonal covariance. Serves as
