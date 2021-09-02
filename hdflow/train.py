@@ -53,6 +53,8 @@ def train(variables, loss_function, dataset, test_dataset, optimizer, ckpt_manag
     n_batch = dataset.cardinality().numpy()
 
     # Loop over epochs
+    train_epoch = np.zeros((n_epochs, n_loss))
+    test_epoch = np.zeros((n_epochs, n_loss))
     for epoch in tqdm(range(n_epochs)):
 
         # Create fresh training set iterator for this epoch
@@ -72,6 +74,10 @@ def train(variables, loss_function, dataset, test_dataset, optimizer, ckpt_manag
         losses = loss_function(batch, **kwargs)
         test = [value.numpy() for value in losses]
 
+        # Store in epoch arrays
+        train_epoch[epoch, :] = train
+        test_epoch[epoch, :] = test
+
         # Write stats to logfile
         out = '%d ' + '%15.10f ' * 2 * n_loss
         logging.info(out % tuple([epoch] + train + test))
@@ -83,11 +89,12 @@ def train(variables, loss_function, dataset, test_dataset, optimizer, ckpt_manag
     # Save final checkpoint
     ckpt_manager.save()
 
+    # Return stats
+    return train_epoch, test_epoch
 
 @tf.function
 def update(variables, loss_function, optimizer, batch, clip=None, **kwargs):
     """
-    Computes gradients of loss function and upates trainable variables.
 
     Parameters
     ----------
