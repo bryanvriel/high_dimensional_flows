@@ -5,7 +5,7 @@ import tensorflow as tf
 from tqdm import tqdm
 import logging
 
-def train(variables, loss_function, dataset, test_dataset, optimizer, ckpt_manager,
+def train(variables, loss_function, dataset, optimizer, ckpt_manager,
           n_epochs=100, clip=None, logfile='log_train', ckpt_skip=10, **kwargs):
     """
     Custom training loop to fetch batches from datasets with different sizes
@@ -43,26 +43,20 @@ def train(variables, loss_function, dataset, test_dataset, optimizer, ckpt_manag
     # Reset logging file
     logging.basicConfig(filename=logfile, filemode='w', level=logging.INFO)
 
-    # Create iterator for testing set
-    test_it = iter(test_dataset)
-
     # Evaluate loss function on test batch in order to get number of losses
-    batch = next(test_it)
+    batch = dataset.test_batch()
     losses = loss_function(batch, **kwargs)
     n_loss = len(losses)
-    n_batch = dataset.cardinality().numpy()
 
     # Loop over epochs
     train_epoch = np.zeros((n_epochs, n_loss))
     test_epoch = np.zeros((n_epochs, n_loss))
     for epoch in tqdm(range(n_epochs)):
 
-        # Create fresh training set iterator for this epoch
-        it = iter(dataset)
-
         # Loop over batches and update variables, keeping batch of training stats
-        train = np.zeros((n_batch, n_loss))
-        for cnt, batch in enumerate(it):
+        train = np.zeros((dataset.n_batches, n_loss))
+        for cnt in range(dataset.n_batches):
+            batch = dataset.train_batch()
             losses = update(variables, loss_function, optimizer, batch)
             train[cnt, :] = [value.numpy() for value in losses]
 
@@ -70,9 +64,12 @@ def train(variables, loss_function, dataset, test_dataset, optimizer, ckpt_manag
         train = np.mean(train, axis=0).tolist()
 
         # Evalute losses on test batch
-        batch = next(test_it)
+        batch = dataset.test_batch()
         losses = loss_function(batch, **kwargs)
         test = [value.numpy() for value in losses]
+
+        # Reshuffle
+        dataset.reset_training()
 
         # Store in epoch arrays
         train_epoch[epoch, :] = train
