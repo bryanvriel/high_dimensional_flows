@@ -15,12 +15,14 @@ from functools import partial
 # jax, flax, optax
 import jax
 import jax.numpy as jnp
+from jax import lax
 import jax.scipy.stats as jstats
 import jax.random as jrandom
 import flax.linen as nn
 import optax
 
 # Custom functions
+from models import Stacked_RNVP
 from covariance_training import seconds_to_mmss, eval_rosenbrock
 
 # Number of dimensions for Rosenbrock function
@@ -40,129 +42,47 @@ def parse_cmd_line():
     return parser.parse_args()
 
 
-class MLP(nn.Module):
+def gradient(f):
+    """Creates a function to grad of a function f.
+    Args:
+        f: Callable with signature f(params, data).
+    Returns:
+        Callable with signature grad(params, data).
     """
-    Standard feedforward neural network.
+    return jax.grad(f, argnums=1)
+
+
+def divergence(f):
+    """Creates a function to divergence of a vector-valued function f.
+    Args:
+        f: Callable with signature f(params, data).
+
+    Returns:
+        Callable with signature div(params, data).
     """
-    features: Sequence[int]
+    def _div_over_f(params, x):
+        n = x.shape[0]
+        eye = jnp.eye(n)
+        f_closure = lambda y: f(params, y)
 
-    @nn.compact
-    def __call__(self, x):
+        def _body_fun(i, val):
+            primal, tangent = jax.jvp(f_closure, (x,), (eye[i],))
+            return val + tangent[i]
 
-        # Iterate over features and apply activation after each layer
-        for feat in self.features[:-1]:
-            x = nn.tanh(nn.Dense(feat)(x))
+        return lax.fori_loop(0, n, _body_fun, 0.0)
 
-        # Final layer without activation
-        x = nn.Dense(self.features[-1])(x)
-        return x
+    return _div_over_f
 
 
-class R_NVP(nn.Module):
+def laplacian(f):
+    """Creates a function to Laplacian of f.
+    Args:
+        f: Callable with signature f(params, data).
+
+    Returns:
+        Callable with signature lapl(params, data).
     """
-    Single Real-NVP block.
-    """
-
-    hidden: int
-
-    def setup(self):
-        self.d = N_DIM
-        self.k = self.d // 2
-        self.sig_net = MLP([self.hidden, self.hidden, self.d - self.k])
-        self.mu_net = MLP([self.hidden, self.hidden, self.d - self.k])
-
-    def __call__(self, x, flip):
-        """
-        The forward transform x -> z, i.e. target -> base.
-        """
-        # Split the input
-        x1 = x[:self.k]
-        x2 = x[self.k:]
-
-        # Optional flip
-        if flip:
-            x2, x1 = x1, x2
-
-        # Forward
-        sig = self.sig_net(x1)
-        z1 = x1
-        z2 = x2 * jnp.exp(sig) + self.mu_net(x1)
-        z_hat = jnp.hstack((z1.squeeze(), z2.squeeze()))
-
-        # Log-determinant of Jacobian
-        jac_logdet = jnp.sum(sig)
-
-        return z_hat, jac_logdet
-
-    def inverse(self, Z, flip):
-        """
-        Inverse transform z -> x, i.e. base -> target.
-        """
-        # Split input
-        z1 = Z[:self.k]
-        z2 = Z[self.k:]
-
-        # Inverse (including flip)
-        x1 = z1
-        x2 = (z2 - self.mu_net(z1)) * jnp.exp(-self.sig_net(z1))
-        if flip:
-            x2, x1 = x1, x2
-
-        return jnp.hstack((x1.squeeze(), x2.squeeze()))
-
-
-class Stacked_RNVP(nn.Module):
-    """
-    Flow of stacked Real-NVP blocks.
-    """
-    hidden: int
-    n_flows: int
-
-    def setup(self):
-        # Must use list comprehension here for creating lists if self.setup()
-        self.bijectors = [R_NVP(self.hidden) for _ in range(self.n_flows)]
-        self.flips = [True if i % 2 else False for i in range(self.n_flows)]
-            
-    def __call__(self, X):
-        """
-        The forward transform x -> z, i.e. target -> base.
-        """
-        # The base distribution MVN arrays
-        base_mu = jnp.zeros(N_DIM)
-        base_cov = jnp.eye(N_DIM)
-
-        # Loop over bijectors
-        z = X
-        log_jacobs = 0
-        for bijector, flip in zip(self.bijectors, self.flips):
-
-            # Forward pass through bijector
-            z, logdet = bijector(z, flip)
-
-            # Compute log-likelihood
-            log_pz = jstats.multivariate_normal.logpdf(z, base_mu, base_cov)
-
-            # Accumulate Jacobian log-determinant
-            log_jacobs += logdet
-
-        return z, log_pz, log_jacobs
-
-    def inverse(self, Z):
-        """
-        Inverse transform z -> x, i.e. base -> target.
-        """
-        # Loop over bijectors and flips in reverse directions
-        x = Z
-        for bijector, flip in zip(reversed(self.bijectors), reversed(self.flips)):
-            x = bijector.inverse(x, flip)
-        return x
-
-    def log_pdf(self, params, X):
-        """
-        Probability distribution function.
-        """
-        _, log_pz, log_jacobs = self.apply(params, X)
-        return log_pz + log_jacobs
+    return divergence(gradient(f))
 
 
 def loss_function_kl(params: optax.Params,
@@ -191,51 +111,50 @@ def loss_function_kl(params: optax.Params,
         # Fokker-Planck operator assembly
         # Drift and diffusion functions specific to problem under
         # consideration
-        #mu = jnp.ones(N_DIM)
-        sigma = 1.41*jnp.eye(N_DIM)
-        def potential(x_in):
-            #return 0.5*jnp.norm(mu-x_in)**2
+        sigma = 1.0
+        def potential(params, x_in):
             return -eval_rosenbrock(x_in)
-        def drift(x_in):
-            return -jax.grad(potential)(x_in)
-        def diff(x_in):
-            return sigma
+        def drift(params, x_in):
+            return -jax.grad(potential, argnums=1)(params, x_in)
 
         # Generic components for assembly of Hp
-        def log_pdf(x_in):
+        def log_pdf(params, x_in):
             "evaluate log pdf"
             return model.log_pdf(params, x_in)
-        def grad_log_pdf(x_in):
-            "evaluate gradient of pdf"
-            return jax.grad(log_pdf)(x_in)
-        def jvp_drift(vec, x_in):
-            "evaluate jacobian-vector product of drift vector field"
-            return jax.grad(lambda w: jnp.vdot(drift(w), vec))(x_in)
-        def jvp_diff_flux(vec, x_in):
-            "evaluate jacobian-vector product of diffusive flux vector field"
-            return jax.grad(lambda w: jnp.vdot(jnp.dot(diff(w),grad_log_pdf(w)), vec))(x_in)
-        def div_drift(x_in):
-            "evaluate divergence of drift vector field"
-            vecs = jnp.eye(N_DIM)
-            div = 0.0
-            for i in range(N_DIM):
-                v = vecs[:,i]
-                div += jnp.vdot(jvp_drift(v, x_in), v)
-            return div
-        def div_diff_flux(x_in):
-            "evaluate divergence of diffusive flux vector field"
-            vecs = jnp.eye(N_DIM)
-            div = 0.0
-            for i in range(N_DIM):
-                v = vecs[:,i]
-                div += jnp.vdot(jvp_diff_flux(v, x_in), v)
-            return div
+        # def grad_log_pdf(params, x_in):
+        #     "evaluate gradient of pdf"
+        #     return jax.grad(log_pdf, argnums=1)(params, x_in)
+        # def jvp_drift(vec, x_in):
+        #     "evaluate jacobian-vector product of drift vector field"
+        #     return jax.grad(lambda w: jnp.vdot(drift(w), vec))(x_in)
+        # def jvp_diff_flux(vec, x_in):
+        #     "evaluate jacobian-vector product of diffusive flux vector field"
+        #     return jax.grad(lambda w: jnp.vdot(jnp.dot(diff(w),grad_log_pdf(w)), vec))(x_in)
+        # def div_drift(x_in):
+        #     "evaluate divergence of drift vector field"
+        #     vecs = jnp.eye(N_DIM)
+        #     div = 0.0
+        #     for i in range(N_DIM):
+        #         v = vecs[:,i]
+        #         div += jnp.vdot(jvp_drift(v, x_in), v)
+        #     return div
+        # def div_diff_flux(x_in):
+        #     "evaluate divergence of diffusive flux vector field"
+        #     vecs = jnp.eye(N_DIM)
+        #     div = 0.0
+        #     for i in range(N_DIM):
+        #         v = vecs[:,i]
+        #         div += jnp.vdot(jvp_diff_flux(v, x_in), v)
+        #     return div
 
         # compute Hp loss function
-        hp = -div_drift(x) - jnp.vdot(drift(x)-jnp.dot(diff(x),grad_log_pdf(x)), grad_log_pdf(x)) + div_diff_flux(x)
+        grad_log_pdf = gradient(log_pdf)
+        hp = -divergence(drift)(params, x) - jnp.vdot(drift(params, x) - sigma*grad_log_pdf(params, x), grad_log_pdf(params, x)) + sigma*laplacian(log_pdf)(params, x)
         hp_loss = hp**2
 
         return hp_loss
+
+
 
     # Vectorize function over entire batch of samples
     loss_batched = jax.vmap(_compute_loss, in_axes=0, out_axes=0)(z_batched)
