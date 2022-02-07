@@ -165,6 +165,38 @@ class DenseNetwork(tf.keras.Model):
         return out
 
 # --------------------------------------------------------------------------------
+# Utility functions
+# --------------------------------------------------------------------------------
+
+def assemble_scale_tensors(norms, keys, dtype=np.float64):
+    """
+    Assembles linear transformation tensors for applying/inverting normalization
+    operations.
+    """
+    # Scale tensor (2D)
+    values = [norms[key].denom for key in keys]
+    W = np.diag(np.array(values, dtype=dtype))
+
+    # Bias tensor (1D)
+    values = [norms[key].xmin for key in keys]
+    b = np.array(values, dtype=dtype).reshape(-1, len(keys))
+
+    return tf.convert_to_tensor(W, dtype=DTYPE), \
+           tf.convert_to_tensor(b, dtype=DTYPE)
+
+def normalize_tensor(x, W, b):
+    """
+    Apply normalization linear transformation.
+    """
+    return 2 * tf.matmul(x - b, 1.0/W) - 1
+
+def inverse_normalize_tensor(xn, W, b):
+    """
+    Apply inverse normalization linear transformation. 
+    """
+    return tf.matmul(0.5 * (xn + 1), W) + b
+
+# --------------------------------------------------------------------------------
 # Some necessary machinery pulled out from tfp.python.internal
 # --------------------------------------------------------------------------------
 
