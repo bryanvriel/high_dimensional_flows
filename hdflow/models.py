@@ -6,9 +6,13 @@ import six
 
 # Tensorflow
 import tensorflow as tf
+
 # Use float64 for now for precision stability
 DTYPE = tf.float64
 tf.keras.backend.set_floatx('float64')
+
+#DTYPE = tf.float32
+#tf.keras.backend.set_floatx('float32')
 
 # Tensorflow probability
 import tensorflow_probability as tfp
@@ -174,21 +178,24 @@ def assemble_scale_tensors(norms, keys, dtype=np.float64):
     operations.
     """
     # Scale tensor (2D)
-    values = [norms[key].denom for key in keys]
-    W = np.diag(np.array(values, dtype=dtype))
+    values = np.array([norms[key].denom for key in keys], dtype=dtype)
+    W = np.diag(values)
+    # Inverse scale tensor (2D)
+    iW = np.diag(1.0 / values)
 
     # Bias tensor (1D)
     values = [norms[key].xmin for key in keys]
     b = np.array(values, dtype=dtype).reshape(-1, len(keys))
 
     return tf.convert_to_tensor(W, dtype=DTYPE), \
+           tf.convert_to_tensor(iW, dtype=DTYPE), \
            tf.convert_to_tensor(b, dtype=DTYPE)
 
-def normalize_tensor(x, W, b):
+def normalize_tensor(x, iW, b):
     """
     Apply normalization linear transformation.
     """
-    return 2 * tf.matmul(x - b, 1.0/W) - 1
+    return 2 * tf.matmul(x - b, iW) - 1
 
 def inverse_normalize_tensor(xn, W, b):
     """
