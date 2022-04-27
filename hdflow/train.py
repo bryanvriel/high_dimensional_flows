@@ -43,10 +43,11 @@ def train(variables, loss_function, dataset, optimizer, ckpt_manager,
     # Reset logging file
     logging.basicConfig(filename=logfile, filemode='w', level=logging.INFO)
 
-    # Evaluate loss function on test batch in order to get number of losses
-    batch = dataset.test_batch()
+    # Evaluate loss function on batch in order to get number of losses
+    batch = dataset.train_batch()
     losses = loss_function(batch, **kwargs)
     n_loss = len(losses)
+    dataset.reset_training()
 
     # Loop over epochs
     train_epoch = np.zeros((n_epochs, n_loss))
@@ -64,9 +65,12 @@ def train(variables, loss_function, dataset, optimizer, ckpt_manager,
         train = np.mean(train, axis=0).tolist()
 
         # Evalute losses on test batch
-        batch = dataset.test_batch()
-        losses = loss_function(batch, **kwargs)
-        test = [value.numpy() for value in losses]
+        try:
+            batch = dataset.test_batch()
+            losses = loss_function(batch, **kwargs)
+            test = [value.numpy() for value in losses]
+        except ValueError:
+            test = train
 
         # Reshuffle
         dataset.reset_training()
