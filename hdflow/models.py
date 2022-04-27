@@ -168,6 +168,53 @@ class DenseNetwork(tf.keras.Model):
 
         return out
 
+
+class ResidualNetwork(tf.keras.Model):
+    """
+    Feedforward, multi-layer neural network with residual blocks.
+    """
+
+    def __init__(self, layer_sizes, initializer='lecun_normal', dtype=DTYPE, name='resnet'):
+        # Initialize parent class
+        super().__init__(name=name)
+
+        # Create and store layers
+        self.net_layers = []
+        for count, size in enumerate(layer_sizes):
+            # Layer names by depth count
+            name = 'dense_%d' % count
+            self.net_layers.append(
+                tf.keras.layers.Dense(
+                    size,
+                    activation=None,
+                    kernel_initializer=initializer,
+                    dtype=dtype,
+                    name=name
+                )
+            )
+        self.n_layers = len(self.net_layers)
+
+    def call(self, inputs, activation=tf.tanh, training=False, activate_outputs=False):
+        """
+        Pass inputs through network and generate an output. All layers except the last
+        layer will pass through an activation function and include residual connection.
+        """
+        # Pass through the layers
+        x = inputs
+        for count, layer in enumerate(self.net_layers):
+            z = layer(x, training=training)
+            if count > 0 and count < (self.n_layers - 1):
+                x = x + activation(z)
+            else:
+                x = z
+        
+        # Output activation
+        if activate_outputs:
+            x = activation(x)
+
+        return x
+
+
 # --------------------------------------------------------------------------------
 # Utility functions
 # --------------------------------------------------------------------------------
