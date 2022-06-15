@@ -238,17 +238,23 @@ def assemble_scale_tensors(norms, keys, dtype=np.float64):
            tf.convert_to_tensor(iW, dtype=DTYPE), \
            tf.convert_to_tensor(b, dtype=DTYPE)
 
-def normalize_tensor(x, iW, b):
+def normalize_tensor(x, iW, b, pos=False):
     """
     Apply normalization linear transformation.
     """
-    return 2 * tf.matmul(x - b, iW) - 1
+    if pos:
+        return tf.matmul(x - b, iW)
+    else:
+        return 2 * tf.matmul(x - b, iW) - 1
 
-def inverse_normalize_tensor(xn, W, b):
+def inverse_normalize_tensor(xn, W, b, pos=False):
     """
     Apply inverse normalization linear transformation. 
     """
-    return tf.matmul(0.5 * (xn + 1), W) + b
+    if pos:
+        return tf.matmul(xn, W) + b
+    else:
+        return tf.matmul(0.5 * (xn + 1), W) + b
 
 # --------------------------------------------------------------------------------
 # Some necessary machinery pulled out from tfp.python.internal
