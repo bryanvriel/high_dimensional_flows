@@ -6,7 +6,8 @@ from tqdm import tqdm
 import logging
 
 def train(variables, loss_function, dataset, optimizer, ckpt_manager,
-          n_epochs=100, clip=None, logfile='log_train', ckpt_skip=10, **kwargs):
+          test_dataset=None, n_epochs=100, clip=None, logfile='log_train', ckpt_skip=10,
+          **kwargs):
     """
     Custom training loop to fetch batches from datasets with different sizes
     and perform updates on variables.
@@ -19,12 +20,12 @@ def train(variables, loss_function, dataset, optimizer, ckpt_manager,
         Function that returns list of losses.
     dataset: tf.data.Dataset
         Training dataset.
-    test_dataset: tf.data.Dataset
-        Testing dataset.
     optimizer: tf.keras.optimizers.Optimizer
         Optimizer.
     ckpt_manager: tf.train.CheckpointManager
         Checkpoint manager for saving weights.
+    test_dataset: tf.data.Dataset, optional.
+        Testing dataset.
     n_epochs: int, optional
         Number of epochs. Default: 100.
     clip: int or float, optional
@@ -52,11 +53,12 @@ def train(variables, loss_function, dataset, optimizer, ckpt_manager,
     # Loop over epochs
     train_epoch = np.zeros((n_epochs, n_loss))
     test_epoch = np.zeros((n_epochs, n_loss))
-    for epoch in tqdm(range(n_epochs)):
+    for epoch in tqdm(range(n_epochs), desc='Epoch loop'):
 
         # Loop over batches and update variables, keeping batch of training stats
         train = np.zeros((dataset.n_batches, n_loss))
-        for cnt in range(dataset.n_batches):
+        #for cnt in range(dataset.n_batches):
+        for cnt in tqdm(range(dataset.n_batches), desc='Batch loop'):
             batch = dataset.train_batch()
             losses = update(variables, loss_function, optimizer, batch)
             train[cnt, :] = [value.numpy() for value in losses]
@@ -66,7 +68,10 @@ def train(variables, loss_function, dataset, optimizer, ckpt_manager,
 
         # Evalute losses on test batch
         try:
-            batch = dataset.test_batch()
+            if test_dataset is not None:
+                batch = test_dataset.train_batch()
+            else:
+                batch = dataset.test_batch()
             losses = loss_function(batch, **kwargs)
             test = [value.numpy() for value in losses]
         except ValueError:

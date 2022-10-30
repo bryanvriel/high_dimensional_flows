@@ -8,11 +8,11 @@ import six
 import tensorflow as tf
 
 # Use float64 for now for precision stability
-DTYPE = tf.float64
-tf.keras.backend.set_floatx('float64')
+#DTYPE = tf.float64
+#tf.keras.backend.set_floatx('float64')
 
-#DTYPE = tf.float32
-#tf.keras.backend.set_floatx('float32')
+DTYPE = tf.float32
+tf.keras.backend.set_floatx('float32')
 
 # Tensorflow probability
 import tensorflow_probability as tfp
