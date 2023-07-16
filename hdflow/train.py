@@ -57,8 +57,8 @@ def train(variables, loss_function, dataset, optimizer, ckpt_manager,
 
         # Loop over batches and update variables, keeping batch of training stats
         train = np.zeros((dataset.n_batches, n_loss))
-        #for cnt in range(dataset.n_batches):
-        for cnt in tqdm(range(dataset.n_batches), desc='Batch loop'):
+        for cnt in range(dataset.n_batches):
+        #for cnt in tqdm(range(dataset.n_batches), desc='Batch loop'):
             batch = dataset.train_batch()
             losses = update(variables, loss_function, optimizer, batch)
             train[cnt, :] = [value.numpy() for value in losses]
