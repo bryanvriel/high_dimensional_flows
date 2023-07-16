@@ -4,6 +4,7 @@ import numpy as np
 import tensorflow as tf
 from tqdm import tqdm
 import logging
+import sys
 
 def train(variables, loss_function, dataset, optimizer, ckpt_manager,
           test_dataset=None, n_epochs=100, clip=None, logfile='log_train', ckpt_skip=10,
@@ -42,11 +43,11 @@ def train(variables, loss_function, dataset, optimizer, ckpt_manager,
     None
     """
     # Reset logging file
-    logging.basicConfig(filename=logfile, filemode='w', level=logging.INFO)
+    logging.basicConfig(filename=logfile, filemode='w', level=logging.INFO, force=True)
 
     # Evaluate loss function on batch in order to get number of losses
-    batch = dataset.train_batch()
-    losses = loss_function(batch, **kwargs)
+    batch = dataset.train_batch() | kwargs
+    losses = loss_function(**batch)
     n_loss = len(losses)
     dataset.reset_training()
 
@@ -59,7 +60,7 @@ def train(variables, loss_function, dataset, optimizer, ckpt_manager,
         train = np.zeros((dataset.n_batches, n_loss))
         for cnt in range(dataset.n_batches):
         #for cnt in tqdm(range(dataset.n_batches), desc='Batch loop'):
-            batch = dataset.train_batch()
+            batch = dataset.train_batch() | kwargs
             losses = update(variables, loss_function, optimizer, batch)
             train[cnt, :] = [value.numpy() for value in losses]
 
@@ -72,7 +73,7 @@ def train(variables, loss_function, dataset, optimizer, ckpt_manager,
                 batch = test_dataset.train_batch()
             else:
                 batch = dataset.test_batch()
-            losses = loss_function(batch, **kwargs)
+            losses = loss_function(**(batch | kwargs))
             test = [value.numpy() for value in losses]
         except ValueError:
             test = train
@@ -87,6 +88,7 @@ def train(variables, loss_function, dataset, optimizer, ckpt_manager,
         # Write stats to logfile
         out = '%d ' + '%15.10f ' * 2 * n_loss
         logging.info(out % tuple([epoch] + train + test))
+        sys.stdout.flush()
 
         # Periodically save checkpoint
         if epoch > 0 and epoch % ckpt_skip == 0:
@@ -99,7 +101,7 @@ def train(variables, loss_function, dataset, optimizer, ckpt_manager,
     return train_epoch, test_epoch
 
 @tf.function
-def update(variables, loss_function, optimizer, batch, clip=None, **kwargs):
+def update(variables, loss_function, optimizer, batch, clip=None):
     """
 
     Parameters
@@ -110,12 +112,12 @@ def update(variables, loss_function, optimizer, batch, clip=None, **kwargs):
         Function that returns list of losses.
     optimizer: tf.keras.optimizers.Optimizer
         Optimizer.
+    fn_args:
+        Arguments passed to loss function.
     batch:
         tf.data.Dataset batch passed to loss function.
     clip: int, float, or None
         Global norm value to clip gradients. Default: None.
-    **kwargs:
-        Additional kwargs passed to loss function.
 
     Returns
     -------
@@ -124,7 +126,7 @@ def update(variables, loss_function, optimizer, batch, clip=None, **kwargs):
     """
     # Compute gradient of total loss
     with tf.GradientTape() as tape:
-        losses = loss_function(batch, **kwargs)
+        losses = loss_function(**batch)
         total_loss = sum(losses)
     grads = tape.gradient(total_loss, variables)
 
