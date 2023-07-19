@@ -16,13 +16,13 @@ def train(variables, loss_function, dataset, optimizer, ckpt_manager,
     Parameters
     ----------
     variables: list
-        List of trainable variables.
+        List of trainable variables or list of lists of trainable variables.
     loss_function:
         Function that returns list of losses.
     dataset: tf.data.Dataset
         Training dataset.
-    optimizer: tf.keras.optimizers.Optimizer
-        Optimizer.
+    optimizer: tf.keras.optimizers.Optimizer, list
+        Optimizer or list of Optimizers.
     ckpt_manager: tf.train.CheckpointManager
         Checkpoint manager for saving weights.
     test_dataset: tf.data.Dataset, optional.
@@ -51,6 +51,17 @@ def train(variables, loss_function, dataset, optimizer, ckpt_manager,
     n_loss = len(losses)
     dataset.reset_training()
 
+    # Check if list of optimizers have been provided
+    multi_opt = False
+    if type(optimizer) == list:
+        multi_opt = True
+        n_opt = len(optimizer)
+        update_fns = []
+        for v, o in zip(variables, optimizer):
+            update_fns.append(tf.function(update_function))
+    else:
+        update = tf.function(update_function)
+
     # Loop over epochs
     train_epoch = np.zeros((n_epochs, n_loss))
     test_epoch = np.zeros((n_epochs, n_loss))
@@ -58,11 +69,17 @@ def train(variables, loss_function, dataset, optimizer, ckpt_manager,
 
         # Loop over batches and update variables, keeping batch of training stats
         train = np.zeros((dataset.n_batches, n_loss))
-        for cnt in range(dataset.n_batches):
-        #for cnt in tqdm(range(dataset.n_batches), desc='Batch loop'):
-            batch = dataset.train_batch() | kwargs
-            losses = update(variables, loss_function, optimizer, batch)
-            train[cnt, :] = [value.numpy() for value in losses]
+        if multi_opt:
+            for cnt in range(dataset.n_batches):
+                batch = dataset.train_batch() | kwargs
+                for v, o, update_fn in zip(variables, optimizer, update_fns):
+                    losses = update_fn(v, loss_function, o, batch)
+                train[cnt, :] = [value.numpy() for value in losses]
+        else:
+            for cnt in range(dataset.n_batches):
+                batch = dataset.train_batch() | kwargs
+                losses = update(variables, loss_function, optimizer, batch)
+                train[cnt, :] = [value.numpy() for value in losses]
 
         # Compute mean train loss
         train = np.mean(train, axis=0).tolist()
@@ -100,8 +117,7 @@ def train(variables, loss_function, dataset, optimizer, ckpt_manager,
     # Return stats
     return train_epoch, test_epoch
 
-@tf.function
-def update(variables, loss_function, optimizer, batch, clip=None):
+def update_function(variables, loss_function, optimizer, batch, clip=None):
     """
 
     Parameters
